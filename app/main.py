@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -13,7 +14,7 @@ from swagger_ui_bundle import __file__ as swagger_ui_bundle_file
 app = FastAPI(
     title="Task API",
     version="1.0",
-    description="A small in-memory CRUD API for FlyRank Week 2.",
+    description="A small SQLite-backed CRUD API for FlyRank Week 3.",
     docs_url=None,
     redoc_url=None,
 )
@@ -21,6 +22,13 @@ app.openapi_version = "3.0.3"
 
 swagger_assets_path = Path(swagger_ui_bundle_file).resolve().parent / "vendor" / "swagger-ui-4.15.5"
 app.mount("/swagger-assets", StaticFiles(directory=str(swagger_assets_path)), name="swagger-assets")
+
+DATABASE_PATH = Path(__file__).resolve().parent.parent / "tasks.db"
+SEED_TASKS = [
+    ("Learn FastAPI basics", 0),
+    ("Build CRUD endpoints", 0),
+    ("Test in Swagger UI", 1),
+]
 
 
 class Task(BaseModel):
@@ -60,22 +68,41 @@ class TaskUpdate(BaseModel):
         return cleaned
 
 
-tasks: list[Task] = [
-    Task(id=1, title="Learn FastAPI basics", done=False),
-    Task(id=2, title="Build CRUD endpoints", done=False),
-    Task(id=3, title="Test in Swagger UI", done=True),
-]
+def get_connection() -> sqlite3.Connection:
+    connection = sqlite3.connect(DATABASE_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
-def find_task_index(task_id: int) -> Optional[int]:
-    for index, task in enumerate(tasks):
-        if task.id == task_id:
-            return index
-    return None
+def row_to_task(row: sqlite3.Row) -> Task:
+    return Task(id=row["id"], title=row["title"], done=bool(row["done"]))
 
 
-def not_found_response(task_id: int) -> JSONResponse:
-    return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
+def initialize_database() -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                done INTEGER NOT NULL CHECK (done IN (0, 1))
+            )
+            """
+        )
+
+        row_count = connection.execute("SELECT COUNT(*) AS count FROM tasks").fetchone()["count"]
+        if row_count == 0:
+            connection.executemany(
+                "INSERT INTO tasks (title, done) VALUES (?, ?)",
+                SEED_TASKS,
+            )
+
+
+initialize_database()
+
+
+def not_found_response() -> JSONResponse:
+    return JSONResponse(status_code=404, content={"error": "Task not found"})
 
 
 @app.exception_handler(RequestValidationError)
@@ -105,46 +132,73 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/tasks", summary="List tasks", description="Return every task currently stored in memory.", response_model=list[Task])
+@app.get("/tasks", summary="List tasks", description="Return every task currently stored in SQLite.", response_model=list[Task])
 def list_tasks() -> list[Task]:
-    return tasks
+    with get_connection() as connection:
+        rows = connection.execute("SELECT id, title, done FROM tasks ORDER BY id").fetchall()
+    return [row_to_task(row) for row in rows]
 
 
 @app.get("/tasks/{task_id}", summary="Get one task", description="Return one task by id.", response_model=Task)
 def get_task(task_id: int):
-    index = find_task_index(task_id)
-    if index is None:
-        return not_found_response(task_id)
-    return tasks[index]
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT id, title, done FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+
+    if row is None:
+        return not_found_response()
+    return row_to_task(row)
 
 
 @app.post("/tasks", summary="Create a task", description="Create a new task with a title.", status_code=201, response_model=Task)
 def create_task(payload: TaskCreate) -> Task:
-    next_id = max((task.id for task in tasks), default=0) + 1
-    task = Task(id=next_id, title=payload.title, done=False)
-    tasks.append(task)
-    return task
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "INSERT INTO tasks (title, done) VALUES (?, ?)",
+            (payload.title, 0),
+        )
+        task_id = cursor.lastrowid
+        row = connection.execute(
+            "SELECT id, title, done FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+
+    return row_to_task(row)
 
 
 @app.put("/tasks/{task_id}", summary="Update a task", description="Update a task's title and/or done status.", response_model=Task)
 def update_task(task_id: int, payload: TaskUpdate):
-    index = find_task_index(task_id)
-    if index is None:
-        return not_found_response(task_id)
-
     if payload.title is None and payload.done is None:
         return JSONResponse(status_code=400, content={"error": "Task update must include title and/or done"})
 
-    updated_task = tasks[index].model_copy(update=payload.model_dump(exclude_unset=True))
-    tasks[index] = updated_task
+    with get_connection() as connection:
+        current_row = connection.execute(
+            "SELECT id, title, done FROM tasks WHERE id = ?",
+            (task_id,),
+        ).fetchone()
+
+        if current_row is None:
+            return not_found_response()
+
+        current_task = row_to_task(current_row)
+        updated_task = current_task.model_copy(update=payload.model_dump(exclude_unset=True))
+
+        connection.execute(
+            "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
+            (updated_task.title, int(updated_task.done), task_id),
+        )
+
     return updated_task
 
 
-@app.delete("/tasks/{task_id}", summary="Delete a task", description="Remove a task from memory.", status_code=204)
+@app.delete("/tasks/{task_id}", summary="Delete a task", description="Remove a task from SQLite.", status_code=204)
 def delete_task(task_id: int) -> Response:
-    index = find_task_index(task_id)
-    if index is None:
-        return not_found_response(task_id)
+    with get_connection() as connection:
+        cursor = connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
 
-    tasks.pop(index)
+    if cursor.rowcount == 0:
+        return not_found_response()
+
     return Response(status_code=204)

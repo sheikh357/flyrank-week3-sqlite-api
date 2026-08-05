@@ -1,6 +1,6 @@
 # Task API
 
-This is a small FastAPI CRUD API for the FlyRank Week 2 assignment. It manages tasks entirely in memory and exposes interactive Swagger UI at `/docs`.
+This is a small FastAPI CRUD API for the FlyRank Week 3 assignment. It stores tasks in SQLite so data survives server restarts, while keeping the same API endpoints from Week 2.
 
 ## Setup
 
@@ -15,6 +15,16 @@ This is a small FastAPI CRUD API for the FlyRank Week 2 assignment. It manages t
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
+
+## Why SQLite
+
+SQLite was chosen because it is a single-file database with zero separate server setup. It creates `tasks.db` automatically on first run and keeps task data after the API restarts.
+
+## Database file
+
+- Database path: `tasks.db` in the project root
+- The file is created automatically when the app starts
+- `tasks.db` is git-ignored so each fresh clone starts with a clean database that seeds itself
 
 ## Endpoints
 
@@ -49,11 +59,26 @@ Open `http://localhost:8000/docs` to try the full CRUD flow.
 
 ![Swagger UI screenshot](docs-screenshot.png)
 
+## SQLite verification
+
+Example SQL query used in Stage 4:
+
+```sql
+SELECT COUNT(*) FROM tasks;
+```
+
+This query returns the total number of rows currently stored in the `tasks` table.
+
+## DB Browser screenshot
+
+Add a screenshot of `tasks.db` open in DB Browser for SQLite here before submission.
+
 ## Notes
 
-- Data is stored only in memory, so it resets when the server restarts.
+- Data is stored in `tasks.db`, so it survives server restarts.
 - POST and PUT validate input and return JSON errors for bad requests.
 - Unknown task IDs return 404 with a JSON error message.
+- The same CRUD endpoint tests from Week 2 still pass, which shows the API contract stayed the same while only the storage layer changed.
 
 ## AI vs Me
 
