@@ -71,7 +71,7 @@ This query returns the total number of rows currently stored in the `tasks` tabl
 
 ## DB Browser screenshot
 
-Add a screenshot of `tasks.db` open in DB Browser for SQLite here before submission.
+![DB Browser for SQLite showing tasks.db](db-browser-screenshot.png)
 
 ## Notes
 
